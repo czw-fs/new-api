@@ -332,6 +332,26 @@ docker run --name new-api -d --restart always \
 ### 🔧 部署方式
 
 <details>
+<summary><strong>方式 0：GitHub Actions 自动部署</strong></summary>
+
+本仓库新增 `.github/workflows/deploy-server.yml`：每次 `push` 都会构建并推送 GHCR 镜像；推送到 `main` 分支时会继续触发服务器部署。
+
+仓库需要配置 Secrets：
+
+```text
+SERVER_HOST=111.228.39.25
+SERVER_USER=<服务器 SSH 用户>
+SERVER_SSH_KEY=<服务器私钥>
+SERVER_PORT=22
+GHCR_USERNAME=<GitHub 用户名，私有镜像需要>
+GHCR_TOKEN=<GitHub PAT，私有镜像需要 packages:read>
+```
+
+服务器侧由运维流程准备 `/opt/new-api/.env`，可参考 `deploy/.env.example`。如需修改目录，在仓库 Variables 中设置 `DEPLOY_PATH`。
+
+</details>
+
+<details>
 <summary><strong>方式 1：Docker Compose（推荐）</strong></summary>
 
 ```bash
