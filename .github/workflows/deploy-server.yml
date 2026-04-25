@@ -110,6 +110,8 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SERVER_SSH_KEY" | perl -pe 's/\\n/\n/g' | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          echo "Deploy key fingerprint:"
+          ssh-keygen -y -f ~/.ssh/deploy_key | ssh-keygen -lf -
 
           ssh_base=(
             -i ~/.ssh/deploy_key
