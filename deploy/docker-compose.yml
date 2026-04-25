@@ -13,8 +13,14 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/app/logs
+    networks:
+      - zz-internal
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -q '\"success\":true'"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+networks:
+  zz-internal:
+    external: true
