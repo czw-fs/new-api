@@ -109,6 +109,14 @@ jobs:
             grep -q '^NEW_API_IMAGE=' .env && \
               sed -i "s|^NEW_API_IMAGE=.*|NEW_API_IMAGE=$IMAGE_TAG|" .env || \
               printf '\nNEW_API_IMAGE=%s\n' "$IMAGE_TAG" >> .env
-            docker compose pull
+            for attempt in 1 2 3 4 5; do
+              if docker compose pull; then
+                break
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                exit 1
+              fi
+              sleep $((attempt * 10))
+            done
             docker compose up -d
             docker image prune -f
