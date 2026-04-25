@@ -11,6 +11,7 @@ on:
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/work/project/zz/new-api' }}
+  IMAGE_ARCHIVE: new-api-image.tar.gz
 
 jobs:
   build:
@@ -66,6 +67,27 @@ jobs:
           provenance: false
           sbom: false
 
+      - name: Build local image archive
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ steps.meta.outputs.image_tag }}
+          cache-from: type=gha
+          provenance: false
+          sbom: false
+
+      - name: Save image archive
+        run: docker save "${IMAGE_TAG}" | gzip > "/tmp/${IMAGE_ARCHIVE}"
+
+      - name: Upload image archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-image
+          path: /tmp/${{ env.IMAGE_ARCHIVE }}
+          retention-days: 1
+
   deploy:
     name: Deploy to server
     runs-on: ubuntu-latest
@@ -75,10 +97,17 @@ jobs:
       - name: Checkout deploy files
         uses: actions/checkout@v4
 
+      - name: Download image archive
+        uses: actions/download-artifact@v4
+        with:
+          name: server-image
+          path: /tmp/server-image
+
       - name: Deploy to server
         env:
           IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
           DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          IMAGE_ARCHIVE: ${{ env.IMAGE_ARCHIVE }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
@@ -125,8 +154,9 @@ jobs:
           remote_path=$(printf '%q' "$DEPLOY_PATH")
           ssh "${ssh_base[@]}" -p "$port" "$SERVER_USER@$SERVER_HOST" "mkdir -p $remote_path"
           scp "${ssh_base[@]}" -P "$port" deploy/docker-compose.yml "$SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/docker-compose.yml"
+          scp "${ssh_base[@]}" -P "$port" "/tmp/server-image/$IMAGE_ARCHIVE" "$SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/$IMAGE_ARCHIVE"
 
-          remote_env="DEPLOY_PATH=$(printf '%q' "$DEPLOY_PATH") IMAGE_TAG=$(printf '%q' "$IMAGE_TAG") GHCR_USERNAME=$(printf '%q' "${GHCR_USERNAME:-}") GHCR_TOKEN=$(printf '%q' "${GHCR_TOKEN:-}")"
+          remote_env="DEPLOY_PATH=$(printf '%q' "$DEPLOY_PATH") IMAGE_TAG=$(printf '%q' "$IMAGE_TAG") IMAGE_ARCHIVE=$(printf '%q' "$IMAGE_ARCHIVE") GHCR_USERNAME=$(printf '%q' "${GHCR_USERNAME:-}") GHCR_TOKEN=$(printf '%q' "${GHCR_TOKEN:-}")"
           ssh "${ssh_base[@]}" -p "$port" "$SERVER_USER@$SERVER_HOST" "$remote_env bash -s" <<'REMOTE_SCRIPT'
             set -eu
             cd "$DEPLOY_PATH"
@@ -137,15 +167,8 @@ jobs:
             grep -q '^NEW_API_IMAGE=' .env && \
               sed -i "s|^NEW_API_IMAGE=.*|NEW_API_IMAGE=$IMAGE_TAG|" .env || \
               printf '\nNEW_API_IMAGE=%s\n' "$IMAGE_TAG" >> .env
-            for attempt in 1 2 3 4 5; do
-              if docker compose pull; then
-                break
-              fi
-              if [ "$attempt" -eq 5 ]; then
-                exit 1
-              fi
-              sleep $((attempt * 10))
-            done
+            gzip -dc "$IMAGE_ARCHIVE" | docker load
+            rm -f "$IMAGE_ARCHIVE"
             docker compose up -d
             docker image prune -f
           REMOTE_SCRIPT
