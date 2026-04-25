@@ -75,31 +75,57 @@ jobs:
       - name: Checkout deploy files
         uses: actions/checkout@v4
 
-      - name: Upload compose file
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          source: deploy/docker-compose.yml
-          target: ${{ env.DEPLOY_PATH }}
-          strip_components: 1
-
-      - name: Restart service
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Deploy to server
         env:
           IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
           DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          envs: IMAGE_TAG,DEPLOY_PATH,GHCR_USERNAME,GHCR_TOKEN
-          script: |
+        shell: bash
+        run: |
+          set -eu
+
+          missing=0
+          for name in SERVER_HOST SERVER_USER SERVER_SSH_KEY; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "::error::$name is not configured"
+              missing=1
+            else
+              echo "$name is configured"
+            fi
+          done
+          if [ -z "${SERVER_PORT:-}" ]; then
+            echo "SERVER_PORT is not configured; defaulting to 22"
+          else
+            echo "SERVER_PORT is configured"
+          fi
+          [ "$missing" -eq 0 ] || exit 1
+
+          port="${SERVER_PORT:-22}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" | perl -pe 's/\\n/\n/g' | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh_base=(
+            -i ~/.ssh/deploy_key
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o ConnectTimeout=15
+          )
+
+          remote_path=$(printf '%q' "$DEPLOY_PATH")
+          ssh "${ssh_base[@]}" -p "$port" "$SERVER_USER@$SERVER_HOST" "mkdir -p $remote_path"
+          scp "${ssh_base[@]}" -P "$port" deploy/docker-compose.yml "$SERVER_USER@$SERVER_HOST:$DEPLOY_PATH/docker-compose.yml"
+
+          remote_env="DEPLOY_PATH=$(printf '%q' "$DEPLOY_PATH") IMAGE_TAG=$(printf '%q' "$IMAGE_TAG") GHCR_USERNAME=$(printf '%q' "${GHCR_USERNAME:-}") GHCR_TOKEN=$(printf '%q' "${GHCR_TOKEN:-}")"
+          ssh "${ssh_base[@]}" -p "$port" "$SERVER_USER@$SERVER_HOST" "$remote_env bash -s" <<'REMOTE_SCRIPT'
             set -eu
             cd "$DEPLOY_PATH"
             if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
@@ -120,3 +146,4 @@ jobs:
             done
             docker compose up -d
             docker image prune -f
+          REMOTE_SCRIPT
