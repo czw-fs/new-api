@@ -10,7 +10,7 @@ on:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
-  DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/new-api' }}
+  DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/work/project/zz/new-api' }}
 
 jobs:
   build:
